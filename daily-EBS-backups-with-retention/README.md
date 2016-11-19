@@ -12,5 +12,6 @@ In short this template will:
     - a cleanup of snapshots that reached the retention date
   - A supporting IAM role
   - Two supporting Lambda permissions
+  - Two CloudWatch Events that run the Lambda functions
 
 
