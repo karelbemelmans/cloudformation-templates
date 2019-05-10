@@ -1,0 +1,382 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "Create networking infrastructure with private and public subnets within an existing VPC"
+
+Parameters:
+  VPCStackName:
+    Description: Name of the stack defining the VPC this stack will use
+    Type: String
+
+  NumberOfAZs:
+    Description: The number of Availability Zones to use for the network setup (if you chose 3, make sure the region supports them)
+    Type: Number
+    Default: 2
+    AllowedValues:
+      - 2
+      - 3
+
+  # Public subnets
+  PublicSubnetOneCIDR:
+    Type: String
+    Description: CIDR for the First Public Subnet range
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{2})
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x/x
+
+  PublicSubnetTwoCIDR:
+    Type: String
+    Description: CIDR for the Second Public Subnet range
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{2})
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x/x
+
+  PublicSubnetThreeCIDR:
+    Type: String
+    Description: CIDR for the Second Public Subnet range
+    AllowedPattern: (^$|(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{2}))
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x/x
+
+  # Private subnets
+  PrivateSubnetOneCIDR:
+    Type: String
+    Description: CIDR for the First Private Subnet range
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{2})
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x/x
+
+  PrivateSubnetTwoCIDR:
+    Type: String
+    Description: CIDR for the Second Private Subnet range
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{2})
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x/x
+
+  PrivateSubnetThreeCIDR:
+    Type: String
+    Description: CIDR for the Second Public Subnet range
+    AllowedPattern: (^$|(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{2}))
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x/x
+
+  KeyPairName:
+    Description: The SSH key pair name to connect to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+
+Conditions:
+  CreateThirdAZResources: !Equals [ !Ref NumberOfAZs, "3" ]
+
+Outputs:
+  PrivateSubnetOne:
+    Value: !Ref PrivateSubnetOne
+
+  PrivateSubnetTwo:
+    Value: !Ref PrivateSubnetTwo
+
+  PrivateSubnetThree:
+    Condition: CreateThirdAZResources
+    Value: !Ref PrivateSubnetThree
+
+  PublicSubnetOne:
+    Value: !Ref PublicSubnetOne
+
+  PublicSubnetTwo:
+    Value: !Ref PublicSubnetTwo
+
+  PublicSubnetThree:
+    Condition: CreateThirdAZResources
+    Value: !Ref PublicSubnetThree
+
+  PublicSubnetRouteTableId:
+    Value: !Ref PublicRouteTable
+
+  PrivateSubnetOneRouteTableId:
+    Value: !Ref PrivateRouteTableOne
+
+  PrivateSubnetTwoRouteTableId:
+    Value: !Ref PrivateRouteTableTwo
+
+  PrivateSubnetThreeRouteTableId:
+    Condition: CreateThirdAZResources
+    Value: !Ref PrivateRouteTableThree
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "Stack References"
+        Parameters:
+          - VPCStackName
+          - KeyPairName
+      -
+        Label:
+          default: "Network Configuration"
+        Parameters:
+          - NumberOfAZs
+          - PublicSubnetOneCIDR
+          - PublicSubnetTwoCIDR
+          - PublicSubnetThreeCIDR
+          - PrivateSubnetOneCIDR
+          - PrivateSubnetTwoCIDR
+          - PrivateSubnetThreeCIDR
+
+Resources:
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: { 'Fn::ImportValue': !Sub "${VPCStackName}-VPCID" }
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: { 'Fn::ImportValue': !Sub "${VPCStackName}-VPCID" }
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: { 'Fn::ImportValue': !Sub "${VPCStackName}-VPCID" }
+      Tags:
+      - Key: Name
+        Value: "Public Route Table"
+
+  PublicRoute:
+    DependsOn: InternetGatewayAttachment
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  #################################################################################
+  # Public Subnet #1
+  #################################################################################
+
+  PublicSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: { 'Fn::ImportValue': !Sub "${VPCStackName}-VPCID" }
+      MapPublicIpOnLaunch: true
+      CidrBlock: !Ref PublicSubnetOneCIDR
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ""
+      Tags:
+      - Key: Name
+        Value: "Public Subnet #1"
+      - Key: Tier
+        Value: "Public"
+
+  PublicSubnetOneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetOne
+      RouteTableId: !Ref PublicRouteTable
+
+  #################################################################################
+  # Public Subnet #2
+  #################################################################################
+  PublicSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: { 'Fn::ImportValue': !Sub "${VPCStackName}-VPCID" }
+      MapPublicIpOnLaunch: true
+      CidrBlock: !Ref PublicSubnetTwoCIDR
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: ""
+      Tags:
+      - Key: Name
+        Value: "Public Subnet #2"
+      - Key: Tier
+        Value: "Public"
+
+  PublicSubnetTwoRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetTwo
+      RouteTableId: !Ref PublicRouteTable
+
+  #################################################################################
+  # Public Subnet #3
+  #################################################################################
+  PublicSubnetThree:
+    Type: AWS::EC2::Subnet
+    Condition: CreateThirdAZResources
+    Properties:
+      VpcId: { 'Fn::ImportValue': !Sub "${VPCStackName}-VPCID" }
+      MapPublicIpOnLaunch: true
+      CidrBlock: !Ref PublicSubnetThreeCIDR
+      AvailabilityZone:
+        Fn::Select:
+          - 2
+          - Fn::GetAZs: ""
+      Tags:
+      - Key: Name
+        Value: "Public Subnet #3"
+      - Key: Tier
+        Value: "Public"
+
+  PublicSubnetThreeRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateThirdAZResources
+    Properties:
+      SubnetId: !Ref PublicSubnetThree
+      RouteTableId: !Ref PublicRouteTable
+
+  #################################################################################
+  # Private Subnet #1
+  #################################################################################
+  ElasticIpOne:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGatewayOne:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ElasticIpOne.AllocationId
+      SubnetId: !Ref PublicSubnetOne
+
+  PrivateRouteTableOne:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: { 'Fn::ImportValue': !Sub "${VPCStackName}-VPCID" }
+      Tags:
+      - Key: Name
+        Value: "Private Route Table #1"
+
+  PrivateRouteToInternetOne:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableOne
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayOne
+
+  PrivateSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: { 'Fn::ImportValue': !Sub "${VPCStackName}-VPCID" }
+      CidrBlock: !Ref PrivateSubnetOneCIDR
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ""
+      Tags:
+      - Key: Name
+        Value: "Private Subnet #1"
+      - Key: Tier
+        Value: "Private"
+
+  PrivateSubnetOneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetOne
+      RouteTableId: !Ref PrivateRouteTableOne
+
+  #################################################################################
+  # Private Subnet #2
+  #################################################################################
+  ElasticIpTwo:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGatewayTwo:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ElasticIpTwo.AllocationId
+      SubnetId: !Ref PublicSubnetTwo
+
+  PrivateRouteTableTwo:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: { 'Fn::ImportValue': !Sub "${VPCStackName}-VPCID" }
+      Tags:
+      - Key: Name
+        Value: "Private Route Table #2"
+
+  PrivateRouteToInternetTwo:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableTwo
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayTwo
+
+  PrivateSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: { 'Fn::ImportValue': !Sub "${VPCStackName}-VPCID" }
+      CidrBlock: !Ref PrivateSubnetTwoCIDR
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: ""
+      Tags:
+      - Key: Name
+        Value: "Private Subnet #2"
+      - Key: Tier
+        Value: "Private"
+
+  PrivateSubnetTwoRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetTwo
+      RouteTableId: !Ref PrivateRouteTableTwo
+
+  #################################################################################
+  # Private Subnet #3
+  #################################################################################
+
+  ElasticIpThree:
+    Type: AWS::EC2::EIP
+    Condition: CreateThirdAZResources
+    Properties:
+      Domain: vpc
+
+  NatGatewayThree:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateThirdAZResources
+    Properties:
+      AllocationId: !GetAtt ElasticIpThree.AllocationId
+      SubnetId: !Ref PublicSubnetThree
+
+  PrivateRouteTableThree:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateThirdAZResources
+    Properties:
+      VpcId: { 'Fn::ImportValue': !Sub "${VPCStackName}-VPCID" }
+      Tags:
+      - Key: Name
+        Value: "Private Route Table #3"
+
+  PrivateRouteToInternetThree:
+    Type: AWS::EC2::Route
+    Condition: CreateThirdAZResources
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableThree
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayThree
+
+  PrivateSubnetThree:
+    Type: AWS::EC2::Subnet
+    Condition: CreateThirdAZResources
+    Properties:
+      VpcId: { 'Fn::ImportValue': !Sub "${VPCStackName}-VPCID" }
+      CidrBlock: !Ref PrivateSubnetThreeCIDR
+      AvailabilityZone:
+        Fn::Select:
+          - 2
+          - Fn::GetAZs: ""
+      Tags:
+      - Key: Name
+        Value: "Private Subnet #3"
+      - Key: Tier
+        Value: "Private"
+
+  PrivateSubnetThreeRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateThirdAZResources
+    Properties:
+      SubnetId: !Ref PrivateSubnetThree
+      RouteTableId: !Ref PrivateRouteTableThree
+

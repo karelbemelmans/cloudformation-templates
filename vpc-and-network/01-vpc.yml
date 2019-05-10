@@ -1,0 +1,124 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Create a VPC with a private DNS subdomain in Route53'
+
+Parameters:
+  VPCName:
+    Description: The name of the VPC
+    Type: String
+    AllowedPattern: ^((\w)+([\w-])*(\w)*)$
+    ConstraintDescription: must be a single word
+
+  CidrBlock:
+    Description: CIDR block to use for the VPC
+    Type: String
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: must be a valid IP address range of the form x.x.x.x/x
+
+  DnsDomain:
+    Description: DNS domain to use for this VPC
+    Type: String
+    Default: REPLACEME.aws.example.org
+    AllowedPattern: (([\w\.-]*)(\.?)aws\.example\.org$)
+    ConstraintDescription: must end with aws.example.org
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "VPC Configuration"
+        Parameters:
+          - VPCName
+          - CidrBlock
+          - VPCType
+      -
+        Label:
+          default: "DNS Configuration"
+        Parameters:
+          - DnsDomain
+
+Outputs:
+  VpcId:
+    Value: !Ref VPC
+    Export:
+      Name: !Join [ '-', [ !Ref "AWS::StackName", VPCID ] ]
+
+  VpcName:
+    Value: !Ref VPCName
+    Export:
+      Name: !Join [ '-', [ !Ref "AWS::StackName", VPCName ] ]
+
+  CidrBlock:
+    Value: !Ref CidrBlock
+    Export:
+      Name: !Join [ '-', [ !Ref "AWS::StackName", VPCCidrBlock ] ]
+
+  DnsDomain:
+    Value: !Ref DnsDomain
+    Export:
+      Name: !Join [ '-', [ !Ref "AWS::StackName", VPCDNSDomain ] ]
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref CidrBlock
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      InstanceTenancy: default
+      Tags:
+      - Key: Name
+        Value: !Ref VPCName
+
+  HostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref DnsDomain
+      HostedZoneConfig:
+        Comment: 'Private hosted zone used for service discovery for internal communication'
+      VPCs:
+      - VPCId: !Ref VPC
+        VPCRegion: !Ref AWS::Region
+
+  IAMRoleForFlowLogs:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: "/"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - vpc-flow-logs.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+        - PolicyName: CloudWatchLogRolePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:DescribeLogGroups
+              - logs:DescribeLogStream
+              Resource:
+              - arn:aws:logs:*:*:*
+
+  FlowLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: 30
+
+  VPCFlowLogs:
+    Type: "AWS::EC2::FlowLog"
+    Properties:
+      DeliverLogsPermissionArn: !GetAtt IAMRoleForFlowLogs.Arn
+      LogGroupName: !Ref FlowLogGroup
+      ResourceId: !Ref VPC
+      ResourceType: VPC
+      TrafficType: ALL
