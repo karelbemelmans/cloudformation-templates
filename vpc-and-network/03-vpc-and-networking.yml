@@ -1,0 +1,414 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "Create networking infrastructure with private and public subnets within an existing VPC"
+
+Parameters:
+  VPCName:
+    Description: The name of the VPC
+    Type: String
+    AllowedPattern: ^((\w)+([\w-])*(\w)*)$
+    ConstraintDescription: must be a single word
+
+  CidrBlock:
+    Description: CIDR block to use for the VPC
+    Type: String
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: must be a valid IP address range of the form x.x.x.x/x
+
+  DnsDomain:
+    Description: DNS domain to use for this VPC
+    Type: String
+    Default: REPLACEME.aws.example.org
+    AllowedPattern: (([\w\.-]*)(\.?)aws\.example\.org$)
+    ConstraintDescription: must end with aws.example.org
+
+  NumberOfAZs:
+    Description: The number of Availability Zones to use for the network setup (if you chose 3, make sure the region supports them)
+    Type: Number
+    Default: 2
+    AllowedValues:
+      - 2
+      - 3
+
+  # Public subnets
+  PublicSubnetOneCIDR:
+    Type: String
+    Description: CIDR for the First Public Subnet range
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{2})
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x/x
+
+  PublicSubnetTwoCIDR:
+    Type: String
+    Description: CIDR for the Second Public Subnet range
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{2})
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x/x
+
+  PublicSubnetThreeCIDR:
+    Type: String
+    Description: CIDR for the Second Public Subnet range
+    AllowedPattern: (^$|(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{2}))
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x/x
+
+  # Private subnets
+  PrivateSubnetOneCIDR:
+    Type: String
+    Description: CIDR for the First Private Subnet range
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{2})
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x/x
+
+  PrivateSubnetTwoCIDR:
+    Type: String
+    Description: CIDR for the Second Private Subnet range
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{2})
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x/x
+
+  PrivateSubnetThreeCIDR:
+    Type: String
+    Description: CIDR for the Second Public Subnet range
+    AllowedPattern: (^$|(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{2}))
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x/x
+
+Conditions:
+  CreateThirdAZResources: !Equals [ !Ref NumberOfAZs, "3" ]
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "VPC Configuration"
+        Parameters:
+          - VPCName
+          - CidrBlock
+          - VPCType
+      -
+        Label:
+          default: "DNS and EC2 Configuration"
+        Parameters:
+          - DnsDomain
+      -
+        Label:
+          default: "Network Configuration"
+        Parameters:
+          - NumberOfAZs
+          - PublicSubnetOneCIDR
+          - PublicSubnetTwoCIDR
+          - PublicSubnetThreeCIDR
+          - PrivateSubnetOneCIDR
+          - PrivateSubnetTwoCIDR
+          - PrivateSubnetThreeCIDR
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref CidrBlock
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      InstanceTenancy: default
+      Tags:
+      - Key: Name
+        Value: !Ref VPCName
+
+  HostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref DnsDomain
+      HostedZoneConfig:
+        Comment: 'Private hosted zone used for service discovery for internal communication'
+      VPCs:
+      - VPCId: !Ref VPC
+        VPCRegion: !Ref AWS::Region
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Ref VPC
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: "Public Route Table"
+
+  PublicRoute:
+    DependsOn: InternetGatewayAttachment
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  #################################################################################
+  # Public Subnet #1
+  #################################################################################
+
+  PublicSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: true
+      CidrBlock: !Ref PublicSubnetOneCIDR
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ""
+      Tags:
+      - Key: Name
+        Value: "Public Subnet #1"
+      - Key: Tier
+        Value: "Public"
+
+  PublicSubnetOneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetOne
+      RouteTableId: !Ref PublicRouteTable
+
+  #################################################################################
+  # Public Subnet #2
+  #################################################################################
+  PublicSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: true
+      CidrBlock: !Ref PublicSubnetTwoCIDR
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: ""
+      Tags:
+      - Key: Name
+        Value: "Public Subnet #2"
+      - Key: Tier
+        Value: "Public"
+
+  PublicSubnetTwoRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetTwo
+      RouteTableId: !Ref PublicRouteTable
+
+  #################################################################################
+  # Public Subnet #3
+  #################################################################################
+  PublicSubnetThree:
+    Type: AWS::EC2::Subnet
+    Condition: CreateThirdAZResources
+    Properties:
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: true
+      CidrBlock: !Ref PublicSubnetThreeCIDR
+      AvailabilityZone:
+        Fn::Select:
+          - 2
+          - Fn::GetAZs: ""
+      Tags:
+      - Key: Name
+        Value: "Public Subnet #3"
+      - Key: Tier
+        Value: "Public"
+
+  PublicSubnetThreeRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateThirdAZResources
+    Properties:
+      SubnetId: !Ref PublicSubnetThree
+      RouteTableId: !Ref PublicRouteTable
+
+  #################################################################################
+  # Private Subnet #1
+  #################################################################################
+  ElasticIpOne:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGatewayOne:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ElasticIpOne.AllocationId
+      SubnetId: !Ref PublicSubnetOne
+
+  PrivateRouteTableOne:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: "Private Route Table #1"
+
+  PrivateRouteToInternetOne:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableOne
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayOne
+
+  PrivateSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnetOneCIDR
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ""
+      Tags:
+      - Key: Name
+        Value: "Private Subnet #1"
+      - Key: Tier
+        Value: "Private"
+
+  PrivateSubnetOneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetOne
+      RouteTableId: !Ref PrivateRouteTableOne
+
+  #################################################################################
+  # Private Subnet #2
+  #################################################################################
+  ElasticIpTwo:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGatewayTwo:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ElasticIpTwo.AllocationId
+      SubnetId: !Ref PublicSubnetTwo
+
+  PrivateRouteTableTwo:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: "Private Route Table #2"
+
+  PrivateRouteToInternetTwo:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableTwo
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayTwo
+
+  PrivateSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnetTwoCIDR
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: ""
+      Tags:
+      - Key: Name
+        Value: "Private Subnet #2"
+      - Key: Tier
+        Value: "Private"
+
+  PrivateSubnetTwoRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetTwo
+      RouteTableId: !Ref PrivateRouteTableTwo
+
+  #################################################################################
+  # Private Subnet #3
+  #################################################################################
+
+  ElasticIpThree:
+    Type: AWS::EC2::EIP
+    Condition: CreateThirdAZResources
+    Properties:
+      Domain: vpc
+
+  NatGatewayThree:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateThirdAZResources
+    Properties:
+      AllocationId: !GetAtt ElasticIpThree.AllocationId
+      SubnetId: !Ref PublicSubnetThree
+
+  PrivateRouteTableThree:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateThirdAZResources
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: "Private Route Table #3"
+
+  PrivateRouteToInternetThree:
+    Type: AWS::EC2::Route
+    Condition: CreateThirdAZResources
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableThree
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayThree
+
+  PrivateSubnetThree:
+    Type: AWS::EC2::Subnet
+    Condition: CreateThirdAZResources
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnetThreeCIDR
+      AvailabilityZone:
+        Fn::Select:
+          - 2
+          - Fn::GetAZs: ""
+      Tags:
+      - Key: Name
+        Value: "Private Subnet #3"
+      - Key: Tier
+        Value: "Private"
+
+  PrivateSubnetThreeRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateThirdAZResources
+    Properties:
+      SubnetId: !Ref PrivateSubnetThree
+      RouteTableId: !Ref PrivateRouteTableThree
+
+Outputs:
+  VpcId:
+    Value: !Ref VPC
+    Export:
+      Name: !Join [ '-', [ !Ref "AWS::StackName", VPCID ] ]
+
+  PrivateSubnets:
+    Description: All private subnets in the VPC
+    Value:
+      Fn::If:
+      - CreateThirdAZResources
+      - !Join [ ",", [ !Ref PrivateSubnetOne, !Ref PrivateSubnetTwo, !Ref PrivateSubnetThree ] ]
+      - !Join [ ",", [ !Ref PrivateSubnetOne, !Ref PrivateSubnetTwo ] ]
+    Export:
+      Name: !Join [ '-', [ !Ref "AWS::StackName", PrivateSubnets ] ]
+
+  PublicSubnets:
+    Description: All public subnets in the VPC
+    Value:
+      Fn::If:
+      - CreateThirdAZResources
+      - !Join [ ",", [ !Ref PublicSubnetOne, !Ref PublicSubnetTwo, !Ref PublicSubnetThree ] ]
+      - !Join [ ",", [ !Ref PublicSubnetOne, !Ref PublicSubnetTwo ] ]
+    Export:
+      Name: !Join [ '-', [ !Ref "AWS::StackName", PublicSubnets ] ]
+
+
+
